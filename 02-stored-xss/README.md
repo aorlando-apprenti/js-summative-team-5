@@ -46,3 +46,11 @@ output.
 Reload. The harness should report **PASS**: the payload renders as inert literal
 text on both the load path and the add path, no `<img>` element reaches the
 feed, and no handler executes.
+
+Sink Map Note: Harden Comment Feed against Stored XSS
+
+• Source: Persisted user-supplied comment objects (author and body) retrieved from localStorage via loadComments()
+
+• Sink (Vulnerable): Unsanitized string concatenation assigned directly to element.innerHTML in both renderAll() and addComment()
+
+• Safe Replacement: Eliminated innerHTML parsing across both render paths[cite: 1, 3]. Implemented encode-on-output using standard DOM APIs: programmatically building elements with document.createElement(), setting untrusted input directly via textContent, and mounting nodes to the document tree via append() and replaceChildren()

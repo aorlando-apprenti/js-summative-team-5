@@ -49,3 +49,24 @@ The lab passes when every payload renders inert (no execution, no surviving
 `<script>` / `on*` / `javascript:` / `<svg>` vector) **and** the benign comment's
 bold, safe link, and list all survive. Over-stripping the formatting is a real
 failure, not a safe outcome.
+
+## Deliverable 2: Battery Payload Results Table
+
+| Payload Vector | Input Payload | DOMPurify Path | Manual DOMParser Path | Verdict / Missed |
+| :--- | :--- | :--- | :--- | :--- |
+| **Script Tag** | `<script>window.__xss()</script>` | Neutralized (node dropped) | Neutralized (node dropped) | Passed — Neither path missed |
+| **Event Handler** | `<img src=x onerror=window.__xss()>` | Neutralized (node dropped) | Neutralized (node dropped) | Passed — Neither path missed |
+| **SVG Handler** | `<svg onload=window.__xss()></svg>` | Neutralized (node dropped) | Neutralized (node dropped) | Passed — Neither path missed |
+| **Dangerous URL** | `<a href="javascript:window.__xss()">click</a>` | Defanged (`href` attribute stripped) | Defanged (`href` attribute stripped) | Passed — Neither path missed |
+| **Mutation Style** | `<div><style>@keyframes x{}</style></div>` | Neutralized (nodes dropped) | Neutralized (nodes dropped) | Passed — Neither path missed |
+
+---
+
+## Deliverable 3: Formatting Preservation Verification
+
+| Target Format | Test Input HTML | DOMPurify Output | Manual DOMParser Output | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Bold** | `<b>Great</b>` | `<b>Great</b>` | `<b>Great</b>` | Preserved — Not over-stripped |
+| **Italics** | `<i>post</i>` | `<i>post</i>` | `<i>post</i>` | Preserved — Not over-stripped |
+| **Safe Link** | `<a href="https://example.com/x">here</a>` | `<a href="https://example.com/x">here</a>` | `<a href="https://example.com/x">here</a>` | Preserved — Safe scheme retained |
+| **Unordered List** | `<ul><li>one</li></ul>` | `<ul><li>one</li></ul>` | `<ul><li>one</li></ul>` | Preserved — Structure retained |

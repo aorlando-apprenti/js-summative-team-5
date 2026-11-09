@@ -43,3 +43,10 @@ Reload the page. The harness in `#result` should report **PASS**: the payload
 `<img src=x onerror=alert(1)>` now renders as the visible literal text
 `Results for: <img src=x onerror=alert(1)>`, no `<img>` element reaches the DOM,
 and no handler executes.
+
+## Sink Map
+
+| Dangerous Sink | Interprets String As | Safe Replacement | Rendering Context |
+| :--- | :--- | :--- | :--- |
+| `innerHTML` | HTML markup / DOM elements (executes scripts & event handlers) | `textContent` | Plain text inside HTML elements |
+

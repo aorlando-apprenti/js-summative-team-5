@@ -52,3 +52,52 @@ control that fits each context:
 The lab passes when none of the three payloads execute or break out (no value
 runs, exactly one `<img>` in the card), and the card still renders correctly for
 benign values. Re-open `index.html` and confirm the verdict reads **PASS**.
+
+
+# Sink Map Report
+
+- Target: `renderCard()` contextual security mapping
+
+## Context & Sink Mappings
+
+### 1. HTML Text Context
+- **Field:** `profile.displayName`
+- **Dangerous Sink:** `element.innerHTML`
+- **Safe API / Control:** `element.textContent`
+- **Defensive Mechanism:** Treats input strictly as plain text, preventing raw HTML injection and DOM-based XSS.
+
+### 2. URL Context
+- **Field:** `profile.website`
+- **Dangerous Sink:** `a.href`
+- **Safe API / Control:** `new URL(value, document.baseURI)` scheme allowlist check (`http:`, `https:`, `mailto:`)
+- **Defensive Mechanism:** Safely parses the input relative to the document base URI and rejects dangerous pseudo-protocols like `javascript:` regardless of casing or whitespace tricks.
+
+### 3. Attribute Context
+- **Field:** `profile.avatar`
+- **Dangerous Sink:** String-built HTML markup (e.g., `innerHTML = '<img src="' + value + '">'`)
+- **Safe API / Control:** `document.createElement("img")` + `setAttribute("src", value)` + URL scheme validation
+- **Defensive Mechanism:** Traps the raw value inside the attribute node so characters like `">` cannot break out to inject new elements or inline event handlers, while simultaneously enforcing valid URL schemes.
+
+### 4. Event-Handler Context
+- **Field:** `profile.contactAction`
+- **Dangerous Sink:** `element.setAttribute("onclick", value)` or inline `onclick="..."`
+- **Safe API / Control:** `element.addEventListener("click", () => showContact(value))`
+- **Defensive Mechanism:** Attaches a static function reference and treats untrusted data strictly as an argument string, preventing the browser from compiling and executing the input as executable code.
+
+# Verification Report
+
+- Status: PASS — All payloads blocked successfully
+
+## Payload Results
+
+1. **URL Context (`profile.website`)**
+   - Payload: `javascript:window.__xssFired.url = true`
+   - Result: **BLOCKED**. The URL parser identified the scheme as `javascript:`, which failed the protocol allowlist check. The `href` attribute was omitted, preventing execution on click.
+
+2. **Attribute Context (`profile.avatar`)**
+   - Payload: `"><img src=x onerror="window.__xssFired.attr = true">`
+   - Result: **BLOCKED**. Building the element via `document.createElement("img")` and setting `src` trapped the raw payload safely inside the attribute value. No markup breakout occurred and `img` count remained 1.
+
+3. **Event-Handler Context (`profile.contactAction`)**
+   - Payload: `window.__xssFired.handler = true`
+   - Result: **BLOCKED**. Replacing inline `onclick` with `addEventListener` treated the payload as string data passed into `showContact()`, preventing JS compilation and execution upon clicking the button.

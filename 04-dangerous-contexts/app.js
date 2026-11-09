@@ -1,4 +1,4 @@
-// app.js — VULNERABLE starter.
+// app.js — HARDENED solution.
 //
 // renderCard() builds a user-profile card from a `profile` object. Three of its
 // fields are untrusted (they come from other users) and each lands in a
@@ -8,22 +8,25 @@
 //   (2) profile.avatar        -> an <img> src          (attribute context)
 //   (3) profile.contactAction -> the button's onclick  (event-handler context)
 //
-// As written, all three are exploitable. Open index.html and read the verdict
-// in #result: the attack harness will report FAIL because every payload fires.
-//
-// YOUR TASK: close all three holes inside renderCard() so the harness reports
-// PASS, while the card still renders correctly for a benign profile. Use the
-// control that fits each context:
-//   - URL context:    parse with the URL API and allow only safe schemes.
-//   - Attribute:      build the <img> with createElement + setAttribute("src", ...)
-//                     (no string-built markup), and still validate the URL scheme
-//                     (contexts compose).
-//   - Event handler:  use addEventListener instead of an inline onclick; pass the
-//                     untrusted value to a function as data, never as code.
+// All three holes inside renderCard() are closed so the harness reports PASS
+// while the card still renders correctly for a benign profile:
+//   - URL context:    parsed with the URL API, allowing only safe schemes (https:, http:, mailto:).
+//   - Attribute:      built the <img> with createElement + setAttribute("src", ...) after URL scheme validation.
+//   - Event handler:  used addEventListener instead of an inline onclick, passing untrusted value as data.
 
 // The legitimate behavior the Contact button should perform with benign data.
 function showContact(value) {
   console.log("Contact action requested:", value);
+}
+
+// Helper function to validate URL schemes.
+function isSafeUrl(urlInput) {
+  try {
+    const parsed = new URL(urlInput, document.baseURI);
+    return ["https:", "http:", "mailto:"].includes(parsed.protocol);
+  } catch (e) {
+    return false;
+  }
 }
 
 function renderCard(profile) {
@@ -33,18 +36,28 @@ function renderCard(profile) {
   // (1) URL context.
   const link = document.createElement("a");
   link.textContent = profile.displayName; // text context — already safe
-  // TODO: Validate profile.website before it reaches a URL sink, then apply the
-  //       same defenses to the avatar (2) and contact button (3) below.
-  link.href = profile.website; // VULNERABLE: javascript: scheme executes on click
+  if (isSafeUrl(profile.website)) {
+    link.href = profile.website;
+  } else {
+    console.warn("Unsafe website scheme rejected:", profile.website);
+  }
 
   // (2) Attribute context.
   const avatarWrap = document.createElement("div");
-  avatarWrap.innerHTML = '<img src="' + profile.avatar + '">'; // VULNERABLE: breakout
+  const img = document.createElement("img");
+  if (isSafeUrl(profile.avatar)) {
+    img.setAttribute("src", profile.avatar);
+  } else {
+    console.warn("Unsafe avatar scheme rejected:", profile.avatar);
+  }
+  avatarWrap.appendChild(img);
 
   // (3) Event-handler context.
   const btn = document.createElement("button");
   btn.textContent = "Contact";
-  btn.setAttribute("onclick", profile.contactAction); // VULNERABLE: value compiled as code
+  btn.addEventListener("click", () => {
+    showContact(profile.contactAction);
+  });
 
   root.append(link, avatarWrap, btn);
 }

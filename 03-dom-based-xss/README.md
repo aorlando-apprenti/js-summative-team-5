@@ -50,3 +50,15 @@ Reload with the attack fragment. The harness should report **PASS**: the payload
 renders as inert literal text (for example `Viewing: <img src=x onerror=alert(1)>`),
 no `<img>` element reaches the panel, and no handler executes — with both sinks
 fixed.
+
+
+| Component | Unsafe (Vulnerable) | Safe (Hardened Replacement) | Purpose & Defense Mechanism |
+| :--- | :--- | :--- | :--- |
+| **Source** | `location.hash` (read in `getActiveTab`) | `location.hash` | Reads untrusted client-side URL fragment input[cite: 1, 3]. |
+| **Sink 1** | `panel.innerHTML` | `panel.replaceChildren()` + `document.createElement("div")` + `textContent` | Clears children and writes text via `textContent`[cite: 1, 3]. Forces input to render strictly as literal text, bypassing HTML parsing. |
+| **Sink 2** | `panel.insertAdjacentHTML` | `document.createElement("small")` + `textContent` + `panel.append()` | Programmatically creates a DOM element node and assigns text safely before appending, preventing markup execution. |
+
+Evidence of Neutralization
+Network Request (Server Blindness): fragment (#<img src=x onerror=alert(1)>) is never sent in the HTTP GET request to the server. Server-side defenses cannot see this flow, making client-side sink remediation mandatory.
+
+Literal Text Rendering (Payload Neutralized): Navigating to index.html#<img src=x onerror=alert(1)> renders <img src=x onerror=alert(1)> as harmless literal text on the screen. No <img> element is created in the DOM, no JavaScript handler fires, and the attack harness reports PASS.
