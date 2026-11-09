@@ -20,29 +20,14 @@
 const MAX_LEN = 2000;
 const POLLUTION_KEYS = ["__proto__", "constructor", "prototype"];
 const SAFE_SCHEMES = ["http:", "https:", "mailto:"];
+const REQUIRED_FIELDS = ["author", "timestamp", "text", "website", "richText"];
 
-// Field defaults a parsed comment is normalized onto.
-const COMMENT_DEFAULTS = { author: "", timestamp: "", text: "", website: "", richText: "" };
 
-// Recursively deep-merge `source` onto `target` to normalize a parsed comment.
-// With no __proto__ guard this is a prototype-pollution vector: when a key is
-// "__proto__", target[key] reaches Object.prototype and the nested merge writes
-// onto it.
-function deepMerge(target, source) {
-  for (const key in source) {
-    if (typeof source[key] === "object" && source[key] !== null) {
-      if (!target[key]) target[key] = {};
-      deepMerge(target[key], source[key]); // key === "__proto__" -> pollutes
-    } else {
-      target[key] = source[key];
-    }
-  }
-  return target;
-}
+
 
 // ---- Parse: turn a comment response body into a comment object. ----
 function validateComment(text) {
-  // TODO (validation layer + object-handling layer): right now this parses and
+  // COMPLETE (validation layer + object-handling layer): right now this parses and
   // does ONE weak check (that the result is an object), then deep-merges the raw
   // parsed object onto the defaults with NO pollution guard. Make it a real
   // validation layer: wrap JSON.parse in try/catch (fail closed), confirm every
@@ -51,18 +36,34 @@ function validateComment(text) {
   // Then add the object-handling layer: reject the POLLUTION_KEYS with
   // Object.hasOwn BEFORE building the object, and build it with
   // Object.create(null), copying only the validated fields (drop deepMerge).
-  const raw = JSON.parse(text); // throws on a malformed body — nothing catches it
-  if (typeof raw !== "object" || raw === null) return null;
+  // Layer 1a: fail closed on malformed JSON
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
 
-  // No length check, no per-field type check, no pollution guard. The deep merge
-  // of an untrusted object is a direct prototype-pollution vector.
-  return deepMerge({ ...COMMENT_DEFAULTS }, raw);
+  // Layer 2a: reject pollution keys BEFORE building anything
+  for (const key of POLLUTION_KEYS) {
+    if (Object.hasOwn(raw, key)) return null;
+  }
+
+  // Layer 1b + 2b: validate each field, copy only those into a prototype-less object
+  const out = Object.create(null);
+  for (const field of REQUIRED_FIELDS) {
+    const value = raw[field];
+    if (typeof value !== "string" || value.length > MAX_LEN) return null;
+    out[field] = value;
+  }
+  return out;
 }
 
 // Return an allowed href, or null. (Helper for the URL layer once you build it.)
 function safeUrl(value) {
   try {
-    const u = new URL(value, location.origin);
+    const u = new URL(value, location.href);
     return SAFE_SCHEMES.includes(u.protocol) ? u.href : null;
   } catch {
     return null;
@@ -74,29 +75,43 @@ function renderComment(c, root) {
   const card = document.createElement("div");
   card.className = "comment";
 
-  // TODO (safe-sink layer): author, timestamp, and text are plain values and
+  // COMPLETE (safe-sink layer): author, timestamp, and text are plain values and
   // should reach the DOM through textContent. Right now they are concatenated
   // into one HTML string and assigned to innerHTML — a markup sink that runs any
   // script the fields carry. Rebuild this with createElement + textContent.
-  card.innerHTML =
-    '<span class="author">' + c.author + "</span>" +
-    "<time>" + c.timestamp + "</time>" +
-    "<p>" + c.text + "</p>";
+  const author = document.createElement("span");
+  author.className = "author";
+  author.textContent = c.author;
 
-  // TODO (URL layer): set the profile link with setAttribute only after a scheme
+  const time = document.createElement("time");
+  time.textContent = c.timestamp;
+
+  const p = document.createElement("p");
+  p.textContent = c.text;
+
+  card.append(author, time, p);
+
+  // COMPLETE (URL layer): set the profile link with setAttribute only after a scheme
   // allow-list check (use safeUrl above), and wire any click behavior with
   // addEventListener — never a raw href and never an inline on* attribute.
   const link = document.createElement("a");
-  link.href = c.website; // accepts javascript: and untrusted data: URLs
+  const href = safeUrl(c.website);
+  if (href) {
+    link.setAttribute("href", href);
+    link.setAttribute("rel", "noopener noreferrer");
+  }
   link.textContent = c.author;
-  link.setAttribute("onclick", "openProfile('" + c.author + "')"); // inline handler
+  link.addEventListener("click", () => openProfile(c.author));
   card.appendChild(link);
 
-  // TODO (sanitization layer): the rich-text body is the ONE field that
+  // COMPLETE (sanitization layer): the rich-text body is the ONE field that
   // genuinely carries HTML. Route it through DOMPurify.sanitize(...) and assign
   // only the sanitized result. Right now the raw value is assigned to innerHTML.
   const rich = document.createElement("div");
-  rich.innerHTML = c.richText; // raw untrusted HTML straight into a markup sink
+  rich.innerHTML = window.DOMPurify.sanitize(c.richText, {
+    ALLOWED_TAGS: ["p", "b", "i", "em", "strong", "ul", "ol", "li", "br", "a"],
+    ALLOWED_ATTR: ["href"],
+  });
   card.appendChild(rich);
 
   root.append(card);

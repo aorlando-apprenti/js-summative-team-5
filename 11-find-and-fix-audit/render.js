@@ -18,7 +18,18 @@
 function renderSearch(term, el) {
   // SOURCE: location.search ?q=  (see app.js).  SINK: innerHTML.
   // The untrusted term is concatenated into markup and parsed as HTML.
-  el.innerHTML = "Showing results for: <strong>" + term + "</strong>";
+  el.replaceChildren();
+  el.append("Showing results for: ");
+  const strong = document.createElement("strong");
+  strong.textContent = term;           // literal text, never parsed
+  el.appendChild(strong);
+}
+
+function safeUrl(raw) {
+  try {
+    const u = new URL(raw, location.origin);
+    return (u.protocol === "https:" || u.protocol === "http:") ? u.href : null;
+  } catch { return null; }
 }
 
 // Render one member card and append it to the list container.
@@ -26,28 +37,32 @@ function renderMember(member, listEl) {
   const card = document.createElement("div");
   card.className = "member";
 
-  // Heading: the member name.
   const h = document.createElement("h3");
-  h.textContent = member.name; // (this one is already safe — note it in your audit)
+  h.textContent = member.name;
   card.appendChild(h);
 
-  // Bio: rendered as HTML so light formatting shows. SINK: insertAdjacentHTML.
-  // The stored bio is attacker-controllable (a saved profile field), so this is
-  // a markup sink fed by persisted untrusted data.
-  card.insertAdjacentHTML("beforeend", "<p>" + member.bio + "</p>");
+  // Bio genuinely carries light HTML, so sanitize with a tight allow-list.
+  const p = document.createElement("p");
+  p.innerHTML = DOMPurify.sanitize(String(member.bio ?? ""), {
+    ALLOWED_TAGS: ["em", "strong", "b", "i", "br"],
+    ALLOWED_ATTR: [],
+  });
+  card.appendChild(p);
 
-  // Profile link. SINK: href set from untrusted data with no scheme check, so a
-  // "javascript:" value becomes executable when clicked.
-  const link = document.createElement("a");
-  link.href = member.website;
-  link.textContent = "Profile";
-  card.appendChild(link);
+  // Link: only written if the scheme is allow-listed.
+  const href = safeUrl(member.website);
+  if (href) {
+    const link = document.createElement("a");
+    link.href = href;
+    link.rel = "noopener noreferrer";
+    link.textContent = "Profile";
+    card.appendChild(link);
+  }
 
-  // "Say hi" button. SINK: an inline onclick string built from the member name,
-  // so a name containing a quote-and-paren breakout injects code.
+  // Button: no inline handler; the name is only ever data.
   const btn = document.createElement("button");
-  btn.setAttribute("onclick", "alert('hi ' + '" + member.name + "')");
   btn.textContent = "Say hi";
+  btn.addEventListener("click", () => alert("hi " + member.name));
   card.appendChild(btn);
 
   listEl.appendChild(card);

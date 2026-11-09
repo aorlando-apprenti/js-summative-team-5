@@ -17,8 +17,12 @@
 // with no checkpoint between them. Your job is to give each stage its own
 // control: a defensive parse, then a render that uses safe sinks.
 
+const REQUIRED_KEYS = ["title", "body", "link", "richText"];
+const POLLUTION_KEYS = ["__proto__", "constructor", "prototype"];
+const ALLOWED_SCHEMES = ["http:", "https:", "mailto:"];
+
 function parseStage(text) {
-  // TODO (parse boundary): this is the first defense point. Right now this does
+  // COMPLETE (parse boundary): this is the first defense point. Right now this does
   // a bare JSON.parse and trusts whatever comes back. Make it a DEFENSIVE PARSE:
   //   1. wrap JSON.parse in try/catch and return null on a SyntaxError
   //      (a malformed body is a rejection condition, not a crash);
@@ -29,11 +33,64 @@ function parseStage(text) {
   //   4. build the result with Object.create(null) and copy only the keys you
   //      validated, so a poisoned inherited property has nowhere to land.
   // Return the validated object, or null to fail closed.
-  return JSON.parse(text); // <-- throws on a bad body; trusts every shape/key
+    // 1. Defensive parse: a malformed body is a rejection, not a crash.
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      return null;
+    }
+   
+    // The top-level value must be a plain object (not null, array, or primitive).
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+   
+    // 2. Shape + type validation: every required key exists as an OWN string.
+    for (const key of REQUIRED_KEYS) {
+      if (!Object.hasOwn(parsed, key) || typeof parsed[key] !== "string") {
+        return null;
+      }
+    }
+
+    // 3. LAST: reject pollution keys before anything is copied or trusted.
+  //    JSON.parse creates "__proto__" as an OWN property, so hasOwn sees it.
+  for (const key of POLLUTION_KEYS) {
+    if (Object.hasOwn(parsed, key)) {
+      return null;
+    }
+  }
+ 
+  // 4. Copy only the validated keys onto a prototype-less object.
+  const clean = Object.create(null);
+  for (const key of REQUIRED_KEYS) {
+    clean[key] = parsed[key];
+  }
+  return clean;
 }
 
+// render helpers
+function safeHref(value) {
+  try {
+    // No base URL: relative values and scheme-less junk throw and are rejected.
+    const url = new URL(value);
+    return ALLOWED_SCHEMES.includes(url.protocol) ? url.href : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// Only the formatting a rich-text field legitimately needs. No <img>, no
+// <script>, no event-handler attributes.
+const PURIFY_CONFIG = {
+  ALLOWED_TAGS: ["p", "br", "strong", "b", "em", "i", "ul", "ol", "li", "a"],
+  ALLOWED_ATTR: ["href"],
+};
+
+  
+
 function renderStage(data, root) {
-  // TODO (render boundary): this is the second defense point. A value that
+  // COMPLETE (render boundary): this is the second defense point. A value that
   // passed parse is NOT automatically safe to render — a well-typed string is
   // still a working script if it lands in a markup sink. Rebuild this so every
   // untrusted value reaches the DOM through a SAFE sink:
@@ -44,12 +101,44 @@ function renderStage(data, root) {
   //     DOMPurify.sanitize(...) and assign only the sanitized result.
   // The single line below is the canonical pipeline bug: it concatenates every
   // untrusted field into one HTML string and assigns it to innerHTML.
-  root.innerHTML =
-    "<h2>" + data.title + "</h2>" +
-    "<p>" + data.body + "</p>" +
-    '<a href="' + data.link + '">Read more</a>' +
-    "<div>" + data.richText + "</div>";
+  root.replaceChildren();
+ 
+  // title and body: textContent only, never a markup sink.
+  const h2 = document.createElement("h2");
+  h2.textContent = data.title;
+ 
+  const p = document.createElement("p");
+  p.textContent = data.body;
+ 
+  root.append(h2, p);
+ 
+  // link: scheme allow-list, then setAttribute. Bad scheme -> no link at all.
+  const href = safeHref(data.link);
+  if (href !== null) {
+    const a = document.createElement("a");
+    a.setAttribute("href", href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.textContent = "Read more";
+    root.append(a);
+  }
+ 
+  // richText: the one field that carries HTML. Sanitize, assign only the
+  // sanitized result. If DOMPurify is unavailable, skip the field (fail closed).
+  if (window.DOMPurify && window.DOMPurify.isSupported) {
+    const div = document.createElement("div");
+    div.innerHTML = window.DOMPurify.sanitize(data.richText, PURIFY_CONFIG);
+    root.append(div);
+  }
 }
+ 
+// Safe empty state used whenever the parse stage rejects a body.
+function renderEmptyState(root) {
+  root.replaceChildren();
+  const p = document.createElement("p");
+  p.textContent = "Content unavailable.";
+  root.append(p);
+}
+
 
 // Shared application state the feature caches parsed responses into. A real app
 // keeps state like this around between renders.
@@ -59,10 +148,11 @@ const appState = { lastArticle: {} };
 // object that still carries a "__proto__" key, this merge writes onto
 // Object.prototype — a prototype-pollution vector with no guard in front of it.
 function deepMerge(target, source) {
-  for (const key in source) {
+  for (const key of Object.keys(source)) {
+    if (POLLUTION_KEYS.includes(key)) continue;
     if (typeof source[key] === "object" && source[key] !== null) {
-      if (!target[key]) target[key] = {};
-      deepMerge(target[key], source[key]); // key === "__proto__" -> pollutes
+      if (!Object.hasOwn(target, key)) target[key] = {};
+      deepMerge(target[key], source[key]);
     } else {
       target[key] = source[key];
     }
@@ -70,10 +160,11 @@ function deepMerge(target, source) {
   return target;
 }
 
+
 // Orchestrator. A real version fetches the body first; the harness hands the
 // raw body text in directly so the lab stays network-free.
 function runPipeline(body, root) {
-  // TODO (orchestration): when the parse stage cannot validate a body it should
+  // COMPLETE (orchestration): when the parse stage cannot validate a body it should
   // return null, and this orchestrator should FAIL CLOSED — render a safe empty
   // state instead of any partial or unvalidated content. Right now it passes
   // whatever parseStage returned straight into render with no check, and the
@@ -81,9 +172,17 @@ function runPipeline(body, root) {
   const data = parseStage(body);
   // Cache the parsed article into shared state via a deep merge. With no parse
   // guard, a "__proto__" key in `data` pollutes Object.prototype here.
-  appState.lastArticle = deepMerge({}, data);
-  renderStage(data, root);
-}
+  if (data === null) {
+      // Fail closed: no partial content, no cache update.
+      appState.lastArticle = {};
+      renderEmptyState(root);
+      return;
+    }
 
+    appState.lastArticle = deepMerge({}, data);
+    renderStage(data, root);
+  }
+  
+  
 // Expose the entry point so the attack harness can drive it directly.
 window.runPipeline = runPipeline;

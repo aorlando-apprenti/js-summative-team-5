@@ -17,24 +17,46 @@
 
 import { DEFAULT_SETTINGS } from "./defaults.js";
 
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 function isObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 // parseSettings deserializes the raw body. The parse is harmless on its own.
+// Optional defense in depth: drop dangerous keys at parse time.
+// Returning undefined from a reviver deletes the property.
 export function parseSettings(rawText) {
-  return JSON.parse(rawText);
+  return JSON.parse(rawText, (key, value) =>
+    DANGEROUS_KEYS.has(key) ? undefined : value
+  );
+}
+
+// Copy a value into a fresh structure with no prototype to pollute,
+// dropping dangerous keys at every depth.
+function safeClone(value) {
+  if (Array.isArray(value)) return value.map(safeClone);
+  if (!isObject(value)) return value;
+  const out = Object.create(null);
+  for (const key of Object.keys(value)) {      // own, enumerable keys only
+    if (DANGEROUS_KEYS.has(key)) continue;
+    out[key] = safeClone(value[key]);
+  }
+  return out;
 }
 
 // The naive recursive merge. There is NO key guard, so "__proto__",
 // "constructor", and "prototype" are treated like any other field — including
 // inside the recursion, which is how a nested payload reaches the prototype too.
 function deepMerge(target, source) {
-  for (const key in source) {
-    if (isObject(target[key]) && isObject(source[key])) {
-      deepMerge(target[key], source[key]); // recurse with no guard
+  for (const key of Object.keys(source)) {     // own keys only
+    if (DANGEROUS_KEYS.has(key)) continue;     // guard at EVERY level
+    const incoming = source[key];
+    if (isObject(incoming)) {
+      if (!isObject(target[key])) target[key] = Object.create(null);
+      deepMerge(target[key], incoming);
     } else {
-      target[key] = source[key]; // __proto__ / constructor write through here
+      target[key] = safeClone(incoming);
     }
   }
   return target;
@@ -50,10 +72,6 @@ export function applySettings(parsedSource) {
   // "__proto__", "constructor", or "prototype" at EVERY recursion level; copy
   // only own keys with Object.hasOwn; and (optionally) strip dangerous keys at
   // parse time with a JSON.parse reviver in parseSettings above.
-  const target = {}; // plain object — prototype is Object.prototype
-  // Seed with a shallow copy of the defaults so a real update merges over them.
-  for (const key in DEFAULT_SETTINGS) {
-    target[key] = DEFAULT_SETTINGS[key];
-  }
+  const target = safeClone(DEFAULT_SETTINGS);  // null-prototype copy, no shared refs
   return deepMerge(target, parsedSource);
 }
