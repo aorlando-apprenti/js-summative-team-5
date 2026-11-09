@@ -13,29 +13,40 @@
 
 // App defaults that the fetched settings are merged on top of.
 const DEFAULT_SETTINGS = { theme: "light", pageSize: 10 };
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
-// Read a fetched config blob and hand back its fields.
-function parseConfig(text) {
-  // A bare JSON.parse: no try/catch (a malformed body throws straight through
-  // the caller), and the result is read with no shape or type checks at all.
-  const cfg = JSON.parse(text);
-  return {
-    title: cfg.title,        // assumed to be a string; never verified
-    maxItems: cfg.maxItems,  // assumed to be a number; never verified
-  };
+function isPlainObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+// Read a fetched config blob and hand back its fields.
+// Fails closed on malformed JSON and validates shape and types.
+function parseConfig(text) {
+  let cfg;
+  try { cfg = JSON.parse(text); }
+  catch { return { ok: false, error: "malformed config" }; }   // fail closed
+
+  if (!isPlainObject(cfg)) return { ok: false, error: "config must be an object" };
+
+  const title = typeof cfg.title === "string" ? cfg.title : null;
+  const maxItems = Number.isInteger(cfg.maxItems) ? cfg.maxItems : null;
+  return { ok: true, title, maxItems };
+}
+
+
 // Recursively deep-merge `source` onto `target` (so nested settings objects are
-// combined rather than replaced). This is a classic prototype-pollution vector:
-// when a key is "__proto__", `target[key]` reaches Object.prototype, and the
-// nested merge writes onto it.
+// combined rather than replaced). Keys that could reach Object.prototype
+// ("__proto__", "constructor", "prototype") are skipped BEFORE target is read
+// or written, so the merge cannot pollute it.
 function deepMerge(target, source) {
-  for (const key in source) {
-    if (typeof source[key] === "object" && source[key] !== null) {
-      if (!target[key]) target[key] = {};
-      deepMerge(target[key], source[key]); // key === "__proto__" -> pollutes
+  for (const key of Object.keys(source)) {
+    if (FORBIDDEN_KEYS.has(key)) continue;          // guard BEFORE touching target
+    const val = source[key];
+    if (isPlainObject(val)) {
+      if (!isPlainObject(target[key]) || !Object.hasOwn(target, key)) target[key] = {};
+      deepMerge(target[key], val);
     } else {
-      target[key] = source[key];
+      target[key] = val;
     }
   }
   return target;
@@ -43,12 +54,11 @@ function deepMerge(target, source) {
 
 // Merge a fetched settings blob on top of the app defaults.
 function applySettings(text) {
-  const parsed = JSON.parse(text);
-  // A deep merge of an untrusted object into trusted state with no __proto__
-  // guard. If `parsed` carries a "__proto__" key, deepMerge writes onto
-  // Object.prototype and every object on the page inherits it.
-  const settings = deepMerge({ ...DEFAULT_SETTINGS }, parsed);
-  return settings;
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch { return { ...DEFAULT_SETTINGS }; }
+  if (!isPlainObject(parsed)) return { ...DEFAULT_SETTINGS };
+  return deepMerge({ ...DEFAULT_SETTINGS }, parsed);
 }
 
 // Expose entry points for app.js and the harness.
