@@ -52,7 +52,7 @@ nothing about whether the shape is usable. `wrong-types` parses fine and must
 still be rejected.
 
 
-Reponse Proof: 
+Reponse Browse Proof:
 
 [verify] BLOCKED — the handler failed closed: every malformed/hostile body was rejected with a distinct reason and the valid body was accepted.
 verify.js:57 [verify]   valid        -> accepted a usable profile
