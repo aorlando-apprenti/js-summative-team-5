@@ -50,3 +50,12 @@ no unhandled exception in the console.
 Remember: a successful parse proves only that the text was valid JSON. It proves
 nothing about whether the shape is usable. `wrong-types` parses fine and must
 still be rejected.
+
+
+Reponse Proof: 
+
+[verify] BLOCKED — the handler failed closed: every malformed/hostile body was rejected with a distinct reason and the valid body was accepted.
+verify.js:57 [verify]   valid        -> accepted a usable profile
+verify.js:57 [verify]   truncated    -> rejected (malformed-json)
+verify.js:57 [verify]   wrong-shape  -> rejected (invalid-shape-missing-user)
+verify.js:57 [verify]   wrong-types  -> rejected (invalid-type-id)

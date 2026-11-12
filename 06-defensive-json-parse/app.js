@@ -26,26 +26,87 @@ export function makeResponse(body) {
   };
 }
 
-// The naive handler. No safe-parse wrapper, no shape check, no bounds check.
-export async function loadProfile(response) {
-  // response.json() calls JSON.parse for you — and throws a SyntaxError on a
-  // truncated or otherwise malformed body, with nothing here to catch it.
-  const data = await response.json();
+const ALLOWED_ROLES = new Set(["admin", "editor", "viewer", "user"]);
 
-  // TODO: This is the fix point. Right now the handler trusts the parsed shape:
-  //   - it does not wrap the parse to convert a SyntaxError into a safe rejection
-  //   - it does not confirm `data.user` exists and is an object before reading it
-  //   - it does not check that `name` is a string or `roles` is a string[]
-  //   - it does not enforce bounds (name length, allowed roles)
-  // Replace the blind property access below with: safeParse -> shape validation
-  // (Object.hasOwn for keys, typeof / Array.isArray for types) -> bounds checks,
-  // returning { ok: true, profile } or { ok: false, reason } and never throwing.
+function safeParse(raw) {
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return { ok: false, reason: "empty-non-string-body" };
+  }
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    return { ok: false, reason: "malformed-json" };
+  }
+}
+
+function isPlainObject(val) {
+  return typeof val === "object" && val !== null && !Array.isArray(val);
+}
+
+// The hardened handler: safeParse - shape validation - type and bounds checks.
+export async function loadProfile(response) {
+ // 1. Read the body as text and wrap JSON.parse to catch SyntaxError instead
+  // of throwing on a truncated or malformed body.
+  let rawText;
+  try {
+    rawText = await response.text();
+  } catch {
+    return { ok: false, reason: "response-read-failed" };
+  }
+
+  const parsed = safeParse(rawText);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const data = parsed.value;
+
+  // 2. Shape validation: confirm `data` is a plain object, `data.user` exists
+  // and is a plain object, and `id`, `name`, and `roles` exist on `user`.
+  if (!isPlainObject(data) || !Object.hasOwn(data, "user") || !isPlainObject(data.user)) {
+    return { ok: false, reason: "invalid-shape-missing-user" };
+  }
+
+  const { user } = data;
+
+  if (
+    !Object.hasOwn(user, "id") ||
+    !Object.hasOwn(user, "name") ||
+    !Object.hasOwn(user, "roles")
+  ) {
+    return { ok: false, reason: "invalid-shape-missing-fields" };
+  }
+
+  // 3. Type checks: confirm `id` is a finite number, `name` is a string, and
+  // `roles` is an array of strings.
+  if (typeof user.id !== "number" || !Number.isFinite(user.id)) {
+    return { ok: false, reason: "invalid-type-id" };
+  }
+
+  if (typeof user.name !== "string") {
+    return { ok: false, reason: "invalid-type-name" };
+  }
+
+  if (!Array.isArray(user.roles) || !user.roles.every((r) => typeof r === "string")) {
+    return { ok: false, reason: "invalid-type-roles" };
+  }
+
+  // 4. Bounds checks: enforce `name.length <= 100` and confirm every role is
+  // in the allowed Set, rejecting rather than clamping or truncating.
+  if (user.name.length > 100) {
+    return { ok: false, reason: "bounds-name-too-long" };
+  }
+
+  if (!user.roles.every((r) => ALLOWED_ROLES.has(r))) {
+    return { ok: false, reason: "bounds-disallowed-role" };
+  }
+
   const profile = {
-    name: data.user.name,                 // throws when there is no `user` key
-    roles: data.user.roles.map((r) => r), // throws when `roles` is not an array
+    id: user.id,
+    name: user.name,
+    roles: user.roles.map((r) => r),
   };
 
-  // Even when this does not throw (e.g. wrong-types makes name === null and
-  // roles a bare string), it hands a corrupt profile back as if it were valid.
   return { ok: true, profile };
 }
+
